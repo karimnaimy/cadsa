@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+# ── What this produces ────────────────────────────────────────────────────────
+# One arch-independent tarball per release:
+#   cadsa-v1.2.3.tar.gz
+#
+# Contains:
+#   backend/        Python source + backend/static/ (pre-built React app)
+#   cadsa.service   systemd unit
+#   config/         cadsa.yaml.example
+#
+# No pre-built venv — install.sh installs uv on the target machine and runs
+# `uv sync`, which also manages the Python version. Only curl and openssl
+# are required on the target.
+# ─────────────────────────────────────────────────────────────────────────────
+
+jobs:
+  build:
+    name: Build tarball
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── Frontend ────────────────────────────────────────────────────────────
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Enable Corepack (yarn v4)
+        run: corepack enable && corepack prepare yarn@stable --activate
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: yarn install --immutable
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          yarn build
+          mkdir -p ../backend/static
+          cp -r dist/. ../backend/static/
+
+      # ── Version file ────────────────────────────────────────────────────────
+      - name: Write version file
+        run: printf '__version__ = "%s"\n' "${GITHUB_REF_NAME#v}" > backend/_version.py
+
+      # ── Package ──────────────────────────────────────────────────────────────
+      - name: Create release tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          TARBALL="cadsa-${VERSION}.tar.gz"
+
+          STAGE="$(mktemp -d)/stage"
+          mkdir -p "$STAGE"
+
+          rsync -a \
+            --exclude='__pycache__' \
+            --exclude='*.pyc' \
+            --exclude='.pytest_cache' \
+            --exclude='tests/' \
+            --exclude='.venv/' \
+            backend/ "$STAGE/backend/"
+
+          cp cadsa.service "$STAGE/cadsa.service"
+          cp -r config/ "$STAGE/config/"
+
+          tar -czf "/tmp/${TARBALL}" -C "$STAGE" .
+
+          echo "TARBALL=/tmp/${TARBALL}" >> "$GITHUB_ENV"
+
+      - name: Upload tarball as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cadsa-tarball
+          path: ${{ env.TARBALL }}
+          retention-days: 1
+
+  # ── GitHub Release ────────────────────────────────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/artifacts/
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: /tmp/artifacts/cadsa-*.tar.gz
+          generate_release_notes: true
+          fail_on_unmatched_files: true

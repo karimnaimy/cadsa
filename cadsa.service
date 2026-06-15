@@ -1,0 +1,31 @@
+[Unit]
+Description=Caddy Server Analytics
+After=network.target
+Documentation=https://github.com/karimnaimy/cadsa
+
+[Service]
+Type=simple
+User=cadsa
+Group=cadsa
+WorkingDirectory=/opt/cadsa/backend
+Environment=UV_CACHE_DIR=/var/lib/cadsa/.uv-cache
+Environment=UV_PROJECT_ENVIRONMENT=/opt/cadsa/backend/.venv
+Environment=UV_PYTHON_INSTALL_DIR=/usr/local/share/uv/python
+ExecStart=/usr/local/bin/uv run --frozen --no-sync python main.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cadsa
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/cadsa /var/log/cadsa /etc/cadsa
+ProtectHome=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
